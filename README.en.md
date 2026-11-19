@@ -8,7 +8,7 @@ Turn your own databases into data sources you can question inside DSH: register 
 
 ## Requirements
 
-- dsh `>=0.2.2-rc.1 <0.3.0`; the bundle ships a host patch, so restart after installing.
+- dsh `>=0.2.2-rc.5 <0.3.0`; the bundle ships a host patch, so restart after installing.
 - Node.js `>=24.9.0` (uses the built-in `node:sqlite`).
 
 ## Install

@@ -8,7 +8,7 @@
 
 ## 环境要求
 
-- dsh `>=0.2.2-rc.1 <0.3.0`；bundle 带宿主 patch，安装后重启生效。
+- dsh `>=0.2.2-rc.5 <0.3.0`；bundle 带宿主 patch，安装后重启生效。
 - Node.js `>=24.9.0`（依赖内置 `node:sqlite`）。
 
 ## 安装
