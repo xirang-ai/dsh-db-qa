@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { test } from 'node:test'
 
 import { openDbqaDatabase } from '../src/store/db.ts'
-import { SCHEMA_COMMENTS } from '../src/store/schema.ts'
+import { MIGRATIONS, SCHEMA_COMMENTS, TARGET_SCHEMA_VERSION } from '../src/store/schema.ts'
 
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), 'dbqa-store-'))
@@ -63,7 +63,7 @@ test('reopening the same file is unchanged', () => {
   const second = openDbqaDatabase({ dataDir: dir })
   try {
     assert.equal(second.report.outcome, 'unchanged')
-    assert.equal(second.report.schemaVersion, 1)
+    assert.equal(second.report.schemaVersion, 2)
   } finally {
     second.close()
   }
@@ -96,7 +96,7 @@ test('a newer metadata schema is opened read-only', () => {
   try {
     assert.equal(database.report.outcome, 'ahead')
     assert.equal(database.report.writable, false)
-    assert.equal(database.report.schemaVersion, 1)
+    assert.equal(database.report.schemaVersion, 2)
   } finally {
     database.close()
   }
@@ -161,6 +161,55 @@ test('list order is creation order and survives test-result updates', () => {
     const after = database.store.list().map((row) => row.name)
     assert.deepEqual(before, ['first', 'second'])
     assert.deepEqual(after, before)
+  } finally {
+    database.close()
+  }
+})
+
+test('an older metadata schema is upgraded and backfills started_at', () => {
+  const dir = tempDir()
+  const file = join(dir, 'db-qa.sqlite')
+
+  // 造一个 v1 库：只跑第一条迁移，再写一条「旧版已经存在」的会话行。
+  const first = MIGRATIONS[0]
+  assert.ok(first !== undefined)
+  const legacy = new DatabaseSync(file)
+  try {
+    first.up(legacy)
+    legacy.exec('PRAGMA user_version = 1')
+    legacy
+      .prepare(
+        `INSERT INTO dbqa_conversation
+           (id, session_id, title, datasource_id, agent_kind, is_favorite, favorited_at, last_active_at, created_at)
+         VALUES (?, ?, ?, NULL, 'query', 0, NULL, ?, ?)`,
+      )
+      .run('cv_legacy', 's_legacy', '旧问题', 1_000, 1_000)
+  } finally {
+    legacy.close()
+  }
+
+  const database = openDbqaDatabase({ dataDir: dir })
+  try {
+    assert.equal(database.report.outcome, 'upgraded')
+    assert.equal(database.report.schemaVersion, TARGET_SCHEMA_VERSION)
+
+    const version = database.db.prepare('PRAGMA user_version').get() as Record<string, unknown>
+    assert.equal(Number(version['user_version']), TARGET_SCHEMA_VERSION)
+    const index = database.db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_conversation_started'")
+      .all()
+    assert.equal(index.length, 1)
+
+    // 旧行按创建时间回填 started_at，升级后仍留在问题列表里。
+    const legacyRow = database.db
+      .prepare('SELECT started_at FROM dbqa_conversation WHERE id = ?')
+      .get('cv_legacy') as Record<string, unknown>
+    assert.equal(Number(legacyRow['started_at']), 1_000)
+
+    // 升级后新建、还没提问的行不进入列表。
+    database.conversations.markActive({ sessionId: 's_new', agentKind: 'query' })
+    const page = database.conversations.listPage({ tab: 'all', page: 1, pageSize: 20 })
+    assert.deepEqual(page.items.map((row) => row.sessionId), ['s_legacy'])
   } finally {
     database.close()
   }

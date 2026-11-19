@@ -374,7 +374,9 @@ export function registerWriteKnowledge(ctx: Context, value: DbqaToolService): vo
       description:
         'Write knowledge documents for the bound datasource. Every file is replaced as a whole (temp file + '
         + 'rename); writes are independent and not rolled back across files. Send at most 20 files per call. '
-        + 'Write table documents first, then index.md last. Only include content the user has confirmed.',
+        + 'Write table documents first, then index.md last. index.md must link to every other document you '
+        + 'generate, and whenever a document describes a relationship to another table or document it must '
+        + 'link to that document with a relative Markdown link. Only include content the user has confirmed.',
       parameters: {
         files: {
           type: 'array',

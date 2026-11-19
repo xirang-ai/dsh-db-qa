@@ -5,6 +5,11 @@
  * 省略时保留原绑定。工具侧只按宿主会话 id 查这一行，不接受调用方传
  * datasourceId（最小暴露）。
  *
+ * 一行分两个阶段：选数据源时 `markActive` 先建行（`started_at` 为 NULL，
+ * 只作绑定与草稿），用户发出首条提问时宿主 `start` 才置 `started_at`。
+ * 问题列表只列 `started_at` 非空的行——选了 Agent 和数据源却没开始对话
+ * 不会留下垃圾条目。
+ *
  * @module
  */
 import type { DatabaseSync } from 'node:sqlite'
@@ -26,6 +31,8 @@ export interface ConversationRecord {
   readonly favoritedAt: number | null
   readonly lastActiveAt: number
   readonly createdAt: number
+  /** 首条用户提问时间；NULL 表示还没开始对话（不算一条问题）。 */
+  readonly startedAt: number | null
 }
 
 /** 绑定后的最小可展示信息。 */
@@ -63,6 +70,7 @@ interface RawRow {
   readonly favorited_at: number | null
   readonly last_active_at: number
   readonly created_at: number
+  readonly started_at: number | null
 }
 
 function toRecord(row: RawRow): ConversationRecord {
@@ -76,6 +84,7 @@ function toRecord(row: RawRow): ConversationRecord {
     favoritedAt: row.favorited_at,
     lastActiveAt: row.last_active_at,
     createdAt: row.created_at,
+    startedAt: row.started_at,
   }
 }
 
@@ -174,7 +183,49 @@ export class ConversationStore {
   }
 
   /**
-   * 问题列表分页：只列查询会话，按索引行建立时间（全部）或收藏时间（收藏）倒序。
+   * 标记「用户已经开始这次对话」，让查询会话进入问题列表。
+   *
+   * 由宿主在首条真人提问时调用，因此列表里不会出现「只选了 Agent 和数据源」
+   * 的空会话。行不存在时补一行（未绑定数据源也算一次真实提问）；已存在时
+   * 只补 `started_at`、把类型改成查询，并在标题为空时写入首条提问摘要。
+   * 幂等：重复调用不会改写首次开始时间。
+   * @param input - 宿主会话 id 与首条提问的标题摘要。
+   * @returns 更新后的行。底层写库失败时抛出，调用方负责兜底——宿主正在处理
+   * 消息，索引失败不应改变消息的结果（见 `src/session-recorder.ts`）。
+   */
+  start(input: { readonly sessionId: string; readonly title: string }): ConversationRecord {
+    const now = Date.now()
+    const existing = this.getBySession(input.sessionId)
+    if (existing === null) {
+      this.#db
+        .prepare(
+          `INSERT INTO dbqa_conversation
+             (id, session_id, title, datasource_id, agent_kind, is_favorite, favorited_at,
+              last_active_at, created_at, started_at)
+           VALUES (?, ?, ?, NULL, 'query', 0, NULL, ?, ?, ?)`,
+        )
+        .run(conversationId(), input.sessionId, input.title, now, now, now)
+    } else {
+      this.#db
+        .prepare(
+          `UPDATE dbqa_conversation
+              SET started_at = COALESCE(started_at, ?),
+                  agent_kind = 'query',
+                  title = CASE WHEN title = '' THEN ? ELSE title END
+            WHERE session_id = ?`,
+        )
+        .run(now, input.title, input.sessionId)
+    }
+    const row = this.getBySession(input.sessionId)
+    if (row === null) {
+      throw new DbqaError('DBQA_INTERNAL', 'dbqa: the conversation row disappeared right after it was written')
+    }
+    return row
+  }
+
+  /**
+   * 问题列表分页：只列已开始提问的查询会话，按索引行建立时间（全部）或
+   * 收藏时间（收藏）倒序。
    *
    * 真正的展示顺序由面板按宿主会话的最后更新时间重排；这里的顺序只用来稳定分页。
    * 页码超界返回空数组与总数，由界面据此判断是否取完。
@@ -186,8 +237,8 @@ export class ConversationStore {
   }): ConversationPage {
     const favorite = input.tab === 'favorite'
     const where = favorite
-      ? "agent_kind = 'query' AND is_favorite = 1 AND favorited_at IS NOT NULL"
-      : "agent_kind = 'query'"
+      ? "agent_kind = 'query' AND started_at IS NOT NULL AND is_favorite = 1 AND favorited_at IS NOT NULL"
+      : "agent_kind = 'query' AND started_at IS NOT NULL"
     const order = favorite ? 'favorited_at DESC, last_active_at DESC' : 'last_active_at DESC, id ASC'
     const page = Number.isFinite(input.page) && input.page >= 1 ? Math.trunc(input.page) : 1
     const pageSize = Number.isFinite(input.pageSize) && input.pageSize >= 1 ? Math.trunc(input.pageSize) : 20

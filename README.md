@@ -1,132 +1,125 @@
 # dsh-db-qa
 
-基于数据库数据回答问题的 DeepSeek Harness 插件。它把「登记连接、读表结构、跑只读 SQL、沉淀问答」做成一小组模型工具，并在 Web 端提供一个只读的工作台面板：左边是已登记的连接，右边是该连接缓存的表结构、最近查询与已保存的回答。
+把用户自己的数据库变成 DSH 里可以提问的数据源：在侧栏「数据问答」登记连接，在会话里用自然语言提问，模型通过 `dbqa_` 工具读表结构、知识库与真实数据后作答。
 
-支持 SQLite、PostgreSQL、MySQL 三种数据库。
+- 数据库：SQLite、PostgreSQL、MySQL，一律只读接入。
+- 两个 Agent preset：**查询回答**（`dbqa-query`，查数作答）与**数据结构分析**（`dbqa-analysis`，生成/维护知识库）。
+- 元数据、问答索引与知识库都放在插件自己的目录，不改用户的库。
 
 ## 环境要求
 
-| 依赖 | 版本 |
-| --- | --- |
-| Node.js | ≥ 24.9.0（使用内置 `node:sqlite`，无需编译原生模块） |
-| DeepSeek Harness | ≥ 0.2.2-rc.1，< 0.3.0 |
-| 可选的数据库驱动 | `pg`、`mysql2` 已随插件安装；只有用到对应类型时才加载 |
+- dsh `>=0.2.2-rc.1 <0.3.0`；bundle 带宿主 patch，安装后重启生效。
+- Node.js `>=24.9.0`（依赖内置 `node:sqlite`）。
 
 ## 安装
 
 ```bash
-dsh plugin --profile web add @xirang-ai/dsh-db-qa
+dsh plugin add @xirang-ai/dsh-db-qa
+dsh web
 ```
 
-安装后必须重启 Host，模型工具与侧栏入口才会出现。本地面板需要 Web 前端（`dsh web`）；纯 CLI 场景下工具照常可用，只是没有面板。
+重启后侧栏出现「数据问答」，面板标题右侧显示当前插件版本。
 
 ## 快速开始
 
-1. 让 Agent 登记一个数据库。SQLite 用文件路径，PostgreSQL/MySQL 用连接串（推荐 `env:变量名`）：
+1. 「数据问答」→「数据源」→「新增数据源」，选类型并填连接信息。
+2. 点「测试连接」：成功时显示数据库版本、耗时与「只读已确认」。测试不是保存的前置条件，但建议先测；保存的若是刚测过的同一份配置，结果会一起落库。
+3. 回「问答列表」，点「创建查询」；在会话顶部选 **查询回答** 与数据源。
+4. 直接提问，例如「上个月各状态的订单数」。模型会先用 `dbqa_describe_schema` / `dbqa_read_knowledge` 了解库，再用 `dbqa_run_query` 取真实数据。
+5. 第一条真人提问才会把会话写进问答列表；之后可以收藏、再次打开。
 
-   ```text
-   用 dbqa_add_connection 登记本地库 /Users/me/app.db，名字叫 app
-   ```
+要生成知识库：在数据源行点「重构数据结构分析」，确认后起一个 **数据结构分析** 会话。模型读取表结构、DDL 与少量样本，写入 `index.md` 与每张表的文档；之后的查询会话会先读知识库。
 
-   登记时会用一个只读账号真实连通、读取结构并执行只读探针；只有结论为 `pass` / `warn` 才会落库。可写账号会被拒绝，不产生连接，也不会出现在侧栏。
+## 面板
 
-2. 读一次表结构，结果会缓存到插件的元数据库：
+**数据源**：列表、统计（数据源 / 连接正常 / 需要处理），每行有「测试连接」「重构数据结构分析」「知识库」「编辑」「删除」。类型创建后不可改。
 
-   ```text
-   dbqa_describe_schema connection=app
-   ```
+**问答列表**：只列真正提过问的查询会话，按宿主会话的最后更新时间排序；「收藏」页签只看收藏。没有数据源时不引导创建查询，先添加数据源。
 
-3. 提问或直接跑只读 SQL：
+**会话**：顶部条带选 Agent 与数据源；工具按当前绑定解析数据源，每轮都生效。
 
-   ```text
-   dbqa_run_query connection=app sql="select status, count(*) from orders group by status"
-   ```
+**知识库**：按数据源展示 `index.md` 与表文档，可切「渲染 / 代码」两种视图。
 
-4. 把结论存下来，下次同一连接可以直接看到：
+## 模型工具
 
-   ```text
-   dbqa_save_answer question="上周各状态订单数" answer="..." connection=app
-   ```
+工具都从**当前会话绑定**解析数据源，不接受 `datasourceId` 参数；每次调用开一条短命只读连接，结束后关闭。
 
-## 工具
-
-| 工具 | 作用 |
-| --- | --- |
-| `dbqa_list_connections` | 列出已登记连接（目标已脱敏）、只读校验结论、表数量、最近 5 条查询 |
-| `dbqa_add_connection` | 只读接入：`name` / `kind`（`sqlite`、`postgres`、`mysql`）/ `target` / `description`；连通、读结构、跑探针后才落库 |
-| `dbqa_revalidate_connection` | 重新校验既有连接的账号权限；可写时降级为 `reject` 并禁止后续查询/读结构 |
-| `dbqa_remove_connection` | 按名称或 id 删除连接及其缓存结构（查询历史保留，连接置空） |
-| `dbqa_describe_schema` | 读全库表/视图结构并刷新缓存；可用 `table` 过滤单表 |
-| `dbqa_run_query` | 执行一条 SQL（能否写入由数据库账号权限决定）；默认行数取配置 `rowLimit`，单次最多 1000 行 |
-| `dbqa_save_answer` | 保存一条问答（可带 `sql` 与 `connection`） |
-
-工具前缀统一为 `dbqa_`，一次调用只做一件事。
+| 工具 | 可用 preset | 作用与参数 |
+| --- | --- | --- |
+| `dbqa_describe_schema` | 两者 | 表结构分页：`tables?`、`schema?`、`offset?`、`limit?`（1–200，默认 25）。返回 DDL、列、索引、外键与注释；`nextOffset` 为 `null` 表示读完。 |
+| `dbqa_sample_rows` | 仅分析 | 取样：`table`、`limit?`（1–10，默认 `sampleRows`）。 |
+| `dbqa_inspect_sql` | 仅分析 | 结构查询：`sql`、`limit?`（1–200，默认 50）。用于 `SHOW CREATE TABLE`、`PRAGMA`、`pg_catalog`；不过只读闸门，能否执行由账号权限决定。 |
+| `dbqa_read_knowledge` | 两者 | 读知识库：`table?`、`part?`（`business` / `schema` / `both`）。 |
+| `dbqa_write_knowledge` | 两者 | 写知识库：`files[]`，每份 `{ table?, part, content }`，最多 20 份；整篇替换、不回滚。先写表文档，最后写 `index.md`，索引必须链到每份文档。 |
+| `dbqa_run_query` | 仅查询 | 查数：`sql`、`limit?`（1..`rowLimit`）。先过只读闸门再限行执行，返回 `columns` / `rows` / `rowCount` / `truncated` / `durationMs`。 |
 
 ## 只读与安全
 
-- 接入与重新校验都先确认账号身份：探针只查权限、不试写。PostgreSQL 检查会话只读、数据库/schema 建表权限、业务表写权限与角色属性；MySQL 检查只读会话开关与 `information_schema` 里的全局/schema/表/列写权限；SQLite 确认以只读方式打开，并检查文件与 WAL 目录的可写性。
-- 结论只有三种：`pass`（确认只读）、`warn`（无法完全确认，放行但展示告警原文）、`reject`（发现明确写权限）。SQLite 没有账号级只读，所以通常为 `warn`，写风险由数据库账号权限承担；旧版 MySQL 没有只读会话开关时同样只判 `warn`。
-- 面板里的「创建只读账号指引」按 PostgreSQL / MySQL / SQLite 分别给出最小权限建号与授权语句、验证方式和常见坑；账号口令一律用占位符。
-- 插件不检查 SQL 文本：能否执行由数据库账号权限决定。连接层仍以只读身份打开（见下条），作为第二道保险。
-- 第二道保险在数据库侧：SQLite 以 `readOnly: true` 打开；PostgreSQL 连接池带 `default_transaction_read_only=on`；MySQL 连接后执行 `SET SESSION TRANSACTION READ ONLY`。
-- 结果永远带行数上限并标记 `truncated`，避免把整库拉进上下文。
-- 超时与断链：每条语句都有服务端超时（PostgreSQL `statement_timeout`，MySQL `max_execution_time` / MariaDB `max_statement_time`），整次工具调用再有 `toolTimeoutMs` 总预算。任一处到期，插件先返回 `DBQA_TIMEOUT`，再强制断链（PostgreSQL 销毁 socket、MySQL `destroy()`），不让挂起的语句把工具调用和连接关闭一起拖住；连接测试同样有上限。SQLite 是同步驱动、无法中断，靠只读打开与 `busy_timeout` 兜底。
-- Agent 侧的负载纪律写在两个 preset 的提示词里：只发廉价查询（带时间范围与选择性条件）、不做全表扫描与重查询、不重试同一条超时语句；超时被当作「这条查询太重」的信号，而不是换个写法继续扫。
-- 凭据隔离：口令可填 `env:变量名`（连接时读取环境变量），也可直接填明文；两者都只进 `secret_ref_json`、不进 `config_json`；编辑表单会回显已存口令，工具输出与错误信息里的连接串、账号与口令仍然脱敏。
+**查询回答**的 SQL 先过只读闸门，再交给数据库：
 
-## 数据与文件
+- 只允许单条语句；首关键字必须是 `SELECT`、`WITH`、`EXPLAIN`、`SHOW`、`DESCRIBE`、`DESC`、`PRAGMA` 或 `TABLE`。
+- 出现写关键字（`INSERT`、`UPDATE`、`DELETE`、`MERGE`、`CREATE`、`ALTER`、`DROP`、`TRUNCATE`、`GRANT`、`VACUUM` 等）就拒绝；注释与字符串字面量里的同名词会先被忽略。
+- `PRAGMA` 只放行只读白名单：`table_info`、`table_xinfo`、`index_list`、`index_info`、`foreign_key_list`、`database_list`、`compile_options`。
+- 拒绝 `FOR UPDATE`、`LOCK IN SHARE MODE`、`INTO OUTFILE`、`SELECT … INTO`，以及 PostgreSQL 的 `set_config` / `pg_terminate_backend` / `pg_cancel_backend`。
 
-元数据库位于：
+**结构分析**用的 `dbqa_inspect_sql` 不过闸门——它要跑 `PRAGMA`、`SHOW CREATE TABLE` 这类语句。这个工具的边界是账号权限与只读连接，不要在分析会话里让模型写数据。
 
-```text
-$DSH_HOME/xirang-ai/dsh-db-qa/db-qa.sqlite
-```
+连接一律以只读身份打开，并留第二道保险：SQLite `readOnly` + `query_only`、PostgreSQL `default_transaction_read_only=on`、MySQL `SET SESSION TRANSACTION READ ONLY`。
 
-其中保存数据源登记、会话、知识库文件索引与查询审计。`dataDir` 可以把整个目录搬到别处。结构版本记录在 `PRAGMA user_version`，升级只追加迁移。
+结果集限行并返回 `truncated`；`dbqa_run_query` 默认最多 `rowLimit`（200）行。语句受 `queryTimeoutMs` 超时、整次调用受 `toolTimeoutMs` 硬预算约束，超时会取消并断开连接。SQLite 是同步 API，没有可中断的语句句柄，长查询只能等它结束；`busy_timeout` 只限制等锁。
+
+凭据策略（产品取舍）：口令可以明文存进插件元数据库的 `secret_ref_json`，也可以写 `env:VAR` 从进程环境读取；`config_json` 不含敏感字段。连接串、账号与口令在日志、工具输出和错误里都会脱敏；编辑表单按设计回显已存口令。
+
+每次工具调用（成功与失败）都写查询审计，保留 `auditRetentionDays` 天。
 
 ## 配置
 
-```yaml
-- id: dbqa
-  config:
-    dataDir: ''
-    defaultLocale: ''
-    rowLimit: 200
-    queryTimeoutMs: 30000
-    toolTimeoutMs: 120000
-    connectTimeoutMs: 10000
-    sampleRows: 5
-    auditRetentionDays: 90
+| 键 | 默认 | 说明 |
+| --- | --- | --- |
+| `dataDir` | `''` | 元数据库与知识库根目录；空串用 `$DSH_HOME/xirang-ai/dsh-db-qa`。 |
+| `defaultLocale` | `''` | 显式 UI 语言（`zh` / `en`）；空串跟随宿主。 |
+| `rowLimit` | `200` | `dbqa_run_query` 默认返回行数上限（1–2000）。 |
+| `queryTimeoutMs` | `30000` | 单条查询的服务端超时（1000–120000）。 |
+| `toolTimeoutMs` | `120000` | 一次工具调用的整体上限，含连接与读行（1000–600000）。 |
+| `connectTimeoutMs` | `10000` | 数据源未单独设置时的连接超时（1000–120000）。 |
+| `sampleRows` | `5` | 结构分析每表取样行数（1–50）。 |
+| `auditRetentionDays` | `90` | 查询审计保留天数（1–3650）。 |
+
+配置写在 profile 的 `cordis.yml` 里 `- id: dbqa` 那一行的 `config` 下；bundle 的默认值见 `cordis.patch.yml`。
+
+## 数据与文件
+
+默认都在 `$DSH_HOME/xirang-ai/dsh-db-qa/`：
+
+```text
+db-qa.sqlite                         元数据库（WAL）
+knowledge/<datasource-id>/index.md
+knowledge/<datasource-id>/tables/<schema.table>/business.md
+knowledge/<datasource-id>/tables/<schema.table>/schema.md
 ```
 
-| 键 | 默认值 | 说明 |
-| --- | --- | --- |
-| `dataDir` | `''` | 元数据库目录；空串表示 `$DSH_HOME/xirang-ai/dsh-db-qa` |
-| `rowLimit` | `200` | 单次查询默认返回的最大行数（1–2000） |
-| `defaultLocale` | `''` | 面板默认语言；空串表示跟随宿主 |
-| `queryTimeoutMs` | `30000` | 单条语句的超时，毫秒（1000–120000）；同时作为 PostgreSQL `statement_timeout` 与 MySQL `max_execution_time` |
-| `toolTimeoutMs` | `120000` | 一次工具调用的整体上限，毫秒（1000–600000）；连接、所有语句与读行都算在里面，超时即断链 |
-| `connectTimeoutMs` | `10000` | 建立连接与测试连接的默认超时，毫秒（1000–120000） |
-| `sampleRows` | `5` | 结构分析时每张表读取的样例行数（1–50） |
-| `auditRetentionDays` | `90` | 查询审计保留天数（1–3650） |
+元数据库用 `PRAGMA user_version` 记结构版本；插件升级时自动执行新增迁移，不回退。升级前建议备份 `db-qa.sqlite`。库里的结构版本高于插件时，会以只读方式打开并告警。
 
 ## 开发
 
 ```bash
 pnpm install
-pnpm run verify      # typecheck → lint → build → test
+pnpm run verify          # typecheck + lint + build + test
+
+DSH_HOME=$PWD/.devhome dsh --profile dev --from-default-profile web --dump-config > /dev/null
+DSH_HOME=$PWD/.devhome dsh plugin --profile dev add .
+DSH_HOME=$PWD/.devhome dsh --profile dev --port 3091 --no-open
 ```
 
-本机联调：
+测试分三层：纯逻辑（闸门、字段解析、行数截断）、装配（临时目录里的元数据库、迁移、CRUD、Remote 服务）、真实 profile 冒烟。发版流程见 [RELEASE.md](RELEASE.md)。
 
-```bash
-dsh --profile dev --from-default-profile web --dump-config > /dev/null
-dsh plugin --profile dev add .
-dsh --profile dev --port 3091 --no-open
-```
+## 已知边界
 
-每次改完代码都要重新 `pnpm run build` 并重启测试 Host，浏览器才会拿到新的 `lib/client.js`。
+- 只支持 SQLite / PostgreSQL / MySQL；没有写操作工具，也不打算提供。
+- 只读闸门是词法级防护，最终权限仍由数据库账号决定；生产库建议用只读账号接入。
+- 一个数据源一份知识库；表文档整篇替换，没有版本历史与回滚。
+- 面板是单用户工作台，不含权限模型；元数据库里的明文口令请按本机机密对待。
 
-## 许可证
+## License
 
 MIT

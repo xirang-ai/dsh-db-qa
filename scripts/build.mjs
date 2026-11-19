@@ -46,6 +46,8 @@ async function buildClient() {
       '@deepseek-ai/dsh-client-ui-primitives',
     ],
     loader: { '.css': 'text' },
+    // 版本号在构建期定死：面板把它显示在标题旁，不需要运行时读文件或发 Remote。
+    define: { __DBQA_VERSION__: JSON.stringify(pkg.version) },
     logLevel: 'warning',
     write: false,
     charset: 'utf8',

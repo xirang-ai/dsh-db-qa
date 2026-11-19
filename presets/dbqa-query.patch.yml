@@ -1,7 +1,7 @@
 # dbqa-query：只读查数作答 Agent。
 #
-# 与 dbqa-analysis 一样，0.2.2-rc.3 的 preset 是普通插件行；这里只 insert 一行
-# `@deepseek-ai/dsh-agent-preset`，由 bundle 的 patch 列表加载。
+# 与 dbqa-analysis 一样，preset 由一行 `@deepseek-ai/dsh-agent-preset` 插件注册，
+# registry 不扫目录；这一行写在 bundle 的 patch 列表里，随插件一起安装。
 # 能力基线：下面的插件列表逐行对齐当前 dsh 内置的 standard preset
 # （@deepseek-ai/dsh-web-app/presets/standard.patch.yml），只把 persona 换成本 Agent 的
 # 提示词、末尾追加本插件自己的工具行。DSH 升级标准模式时，这里要跟着重新对齐。

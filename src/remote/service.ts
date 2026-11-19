@@ -6,6 +6,7 @@
  *
  * @module
  */
+import { createHash } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
@@ -13,7 +14,16 @@ import { TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import type { Config } from '../config.ts'
 import type { DatasourceStore, DatasourceSummary } from '../store/datasource.ts'
 import type { DbqaDatabase } from '../store/db.ts'
-import { fieldsFor, mergeSecrets, splitDraft, validateDraft, type DbType } from '../db/fields.ts'
+import type { ProbeResult } from '../db/adapter.ts'
+import {
+  fieldsFor,
+  mergeSecrets,
+  splitDraft,
+  validateDraft,
+  type DbType,
+  type FieldValue,
+  type SecretRef,
+} from '../db/fields.ts'
 import { testConnection } from '../db/probe.ts'
 import { DbqaError } from '../errors.ts'
 import {
@@ -46,6 +56,27 @@ import {
 /** 表单名称冲突的文案键。 */
 const NAME_TAKEN_KEY = 'dbqa.validation.nameTaken'
 
+/** 未保存草稿最多记住几次测试结论；超出按先进先出丢弃。 */
+const DRAFT_PROBE_LIMIT = 4
+
+/** 一次「测试连接」的结论，保存同一份草稿时补写进数据源行。 */
+interface DraftProbe {
+  readonly ok: boolean
+  readonly versionRaw: string | null
+  readonly versionNum: number | null
+  readonly errorCode: string | null
+}
+
+/** 同一份草稿的指纹：类型、名称、非敏感字段与敏感引用都参与。 */
+function draftProbeKey(
+  type: DbType,
+  name: string,
+  config: Readonly<Record<string, FieldValue>>,
+  secrets: Readonly<Record<string, SecretRef>>,
+): string {
+  return createHash('sha256').update(JSON.stringify([type, name, config, secrets])).digest('hex')
+}
+
 /** 面板的数据通道实现。 */
 export class DbqaWorkbenchService extends TypertRemoteService {
   // 用普通属性而不是 `#` 私有字段：Cordis 调用方法时会把 service 包一层
@@ -56,6 +87,8 @@ export class DbqaWorkbenchService extends TypertRemoteService {
   private readonly dataDir: string
   private readonly ctxRef: Context
   private readonly abort = new AbortController()
+  /** 面板刚测过、还没保存的草稿结论，按指纹等保存时认领。 */
+  private readonly draftProbes = new Map<string, DraftProbe>()
 
   constructor(ctx: Context, database: DbqaDatabase, config: Config) {
     super(ctx, SERVICE_KEY, { namespace: NAMESPACE })
@@ -127,7 +160,10 @@ export class DbqaWorkbenchService extends TypertRemoteService {
             config: split.value.config,
             secrets,
           })
-    return { saved, issues: [] }
+    // 面板通常先测连接再保存；保存的若正是刚测过的草稿，把结论一并落库，
+    // 免得列表刚建好就显示「未测试」。草稿改过时指纹不同，不会误用旧结论。
+    this.applyProbe(saved.id, draftProbeKey(draft.dbType, split.value.name, split.value.config, secrets))
+    return { saved: this.storeRef.list().find((row) => row.id === saved.id) ?? saved, issues: [] }
   }
 
   /** 删除；不存在时返回 `removed: false`，让面板提示而不是报错。 */
@@ -340,8 +376,38 @@ export class DbqaWorkbenchService extends TypertRemoteService {
         ...(probe.versionNum === null ? {} : { versionNum: probe.versionNum }),
         ...(probe.errorCode === null ? {} : { errorCode: probe.errorCode }),
       })
+    } else {
+      this.rememberProbe(draftProbeKey(type, split.value.name, split.value.config, split.value.secrets), probe)
     }
     return { result: view, issues: [] }
+  }
+
+  /** 记住一次草稿探针结论，等待同一份草稿的保存认领。 */
+  private rememberProbe(key: string, probe: ProbeResult): void {
+    this.draftProbes.set(key, {
+      ok: probe.ok,
+      versionRaw: probe.versionRaw,
+      versionNum: probe.versionNum,
+      errorCode: probe.errorCode,
+    })
+    while (this.draftProbes.size > DRAFT_PROBE_LIMIT) {
+      const oldest = this.draftProbes.keys().next().value
+      if (oldest === undefined) break
+      this.draftProbes.delete(oldest)
+    }
+  }
+
+  /** 保存的草稿刚测过时，把这次结论写进数据源行；每份草稿只认领一次。 */
+  private applyProbe(id: string, key: string): void {
+    const probe = this.draftProbes.get(key)
+    if (probe === undefined) return
+    this.draftProbes.delete(key)
+    this.storeRef.recordTest(id, {
+      ok: probe.ok,
+      ...(probe.versionRaw === null ? {} : { versionRaw: probe.versionRaw }),
+      ...(probe.versionNum === null ? {} : { versionNum: probe.versionNum }),
+      ...(probe.errorCode === null ? {} : { errorCode: probe.errorCode }),
+    })
   }
 
   /** 字段定义；版本已知时顺带给出置灰与收窄后的选项。 */

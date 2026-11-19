@@ -135,6 +135,7 @@ test('the all tab lists only query conversations by last activity, newest first'
       database.conversations.markActive({ sessionId, datasourceId: a, agentKind: 'query', title: sessionId })
     }
     database.conversations.markActive({ sessionId: 'an1', datasourceId: a, agentKind: 'analysis', title: 'an1' })
+    for (const sessionId of ['q1', 'q2', 'q3']) database.conversations.start({ sessionId, title: sessionId })
     stamp(database, 'q1', { lastActiveAt: 1000 })
     stamp(database, 'q2', { lastActiveAt: 3000 })
     stamp(database, 'q3', { lastActiveAt: 2000 })
@@ -162,6 +163,7 @@ test('the favorite tab lists favorited conversations by favorite time', () => {
     for (const sessionId of ['q1', 'q2', 'q3']) {
       database.conversations.markActive({ sessionId, datasourceId: a, agentKind: 'query', title: sessionId })
     }
+    for (const sessionId of ['q1', 'q2', 'q3']) database.conversations.start({ sessionId, title: sessionId })
     const q1 = database.conversations.getBySession('q1')
     const q2 = database.conversations.getBySession('q2')
     assert.ok(q1 !== null && q2 !== null)
@@ -203,6 +205,59 @@ test('setFavorite is keyed by row id, idempotent and clears the favorite time', 
     assert.equal(off?.favoritedAt, null)
 
     assert.equal(database.conversations.setFavorite('cv_missing', true), null)
+  } finally {
+    database.close()
+  }
+})
+
+test('a datasource selection alone does not add the conversation to the list', () => {
+  const database = openDbqaDatabase({ dataDir: tempDir() })
+  try {
+    const a = datasource(database, 'a')
+    database.conversations.markActive({ sessionId: 'draft', datasourceId: a, agentKind: 'query' })
+
+    const page = database.conversations.listPage({ tab: 'all', page: 1, pageSize: 20 })
+    assert.equal(page.total, 0)
+    assert.ok(database.conversations.getBySession('draft')?.startedAt === null)
+    // 草稿仍然保留绑定，工具在首条提问时就能拿到数据源。
+    assert.equal(database.conversations.requireBinding('draft').datasourceId, a)
+  } finally {
+    database.close()
+  }
+})
+
+test('the first question starts the row once and pins it to the query kind', () => {
+  const database = openDbqaDatabase({ dataDir: tempDir() })
+  try {
+    const a = datasource(database, 'a')
+    database.conversations.markActive({ sessionId: 's1', datasourceId: a, agentKind: 'analysis' })
+
+    const started = database.conversations.start({ sessionId: 's1', title: '上月订单量' })
+    assert.equal(started?.agentKind, 'query')
+    assert.equal(started?.title, '上月订单量')
+    assert.equal(started?.datasourceId, a)
+    assert.ok((started?.startedAt ?? 0) > 0)
+
+    const firstAt = started?.startedAt ?? 0
+    const again = database.conversations.start({ sessionId: 's1', title: '另一个标题' })
+    // 重复开始只保留首次时间与已有标题，不覆盖。
+    assert.equal(again?.startedAt, firstAt)
+    assert.equal(again?.title, '上月订单量')
+
+    const page = database.conversations.listPage({ tab: 'all', page: 1, pageSize: 20 })
+    assert.deepEqual(page.items.map((row) => row.sessionId), ['s1'])
+  } finally {
+    database.close()
+  }
+})
+
+test('starting a conversation without a datasource still lists it', () => {
+  const database = openDbqaDatabase({ dataDir: tempDir() })
+  try {
+    database.conversations.start({ sessionId: 's2', title: '没选数据源' })
+    const page = database.conversations.listPage({ tab: 'all', page: 1, pageSize: 20 })
+    assert.deepEqual(page.items.map((row) => row.sessionId), ['s2'])
+    assert.equal(page.items[0]?.datasourceId, null)
   } finally {
     database.close()
   }
