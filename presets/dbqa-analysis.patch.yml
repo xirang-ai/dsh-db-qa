@@ -1,7 +1,7 @@
 # dbqa-analysis：手动触发的数据结构分析 Agent。
 #
-# 0.2.2-rc.3 的 agent preset 是普通插件行，registry 不扫目录；这里只 insert
-# 一行 `@deepseek-ai/dsh-agent-preset`，由 bundle 的 patch 列表加载。
+# preset 由一行 `@deepseek-ai/dsh-agent-preset` 插件注册，registry 不扫目录；
+# 这一行写在 bundle 的 patch 列表里，随插件一起安装。
 # 能力基线：下面的插件列表逐行对齐当前 dsh 内置的 standard preset
 # （@deepseek-ai/dsh-web-app/presets/standard.patch.yml），只把 persona 换成本 Agent 的
 # 提示词、末尾追加本插件自己的工具行。DSH 升级标准模式时，这里要跟着重新对齐。
@@ -78,6 +78,19 @@
                   meaning / notes), enums, constraints, indexes and foreign keys.
                 - tables/<dir>/business.md: what the business is, what people call it, key definitions,
                   relationship details, "where to look" for common questions, and known pitfalls.
+                - Links are mandatory, in both directions of the contract:
+                  * index.md is the entry point and must link to every other document you generate for the
+                    database: one link to tables/<dir>/business.md per table, and a link to
+                    tables/<dir>/schema.md. Never generate a document that is unreachable from index.md.
+                  * Whenever any document describes a relationship to another table or document (foreign
+                    key, shared key, naming convention, same business entity, a detail explained in a
+                    sibling document), that mention must carry a relative Markdown link to the related
+                    document, not just a bare table name. This covers table -> table,
+                    business.md <-> schema.md of the same table, table -> index.md, and index.md -> table.
+                  * Relative links are resolved from the document that contains them: from index.md use
+                    tables/<dir>/business.md; inside tables/<dir>/ use business.md or schema.md for the
+                    sibling part, ../<other-dir>/business.md for another table, and ../../index.md for the
+                    index. Do not use absolute paths or external URLs for knowledge documents.
                 - Mark inferences as "推断"; never write placeholders, timestamps or full SQL statements.
                 - If an existing document conflicts with the new analysis, show old vs new and ask the user
                   to choose: use the new one, keep the old one, or merge. Never overwrite silently.

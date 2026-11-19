@@ -1,104 +1,124 @@
 # dsh-db-qa
 
-A DeepSeek Harness plugin that answers questions from your databases. It gives the agent a small set of tools (register a connection, read its schema, run read-only SQL, keep the answer) and the Web client a read-only workbench panel: connections on the left, and that connection's cached schema, recent queries, and saved answers on the right.
+Turn your own databases into data sources you can question inside DSH: register a connection in the **Data Q&A** sidebar panel, then ask in natural language while the model reads schema, the knowledge base and real rows through `dbqa_` tools.
 
-SQLite, PostgreSQL and MySQL are supported.
+- Databases: SQLite, PostgreSQL and MySQL, always opened read-only.
+- Two agent presets: **Data Query** (`dbqa-query`, answers questions) and **Data Analysis** (`dbqa-analysis`, builds and maintains the knowledge base).
+- Metadata, question index and knowledge bases live in the plugin's own directory; your databases are never modified.
 
 ## Requirements
 
-| Dependency | Version |
-| --- | --- |
-| Node.js | ≥ 24.9.0 (`node:sqlite` is built in; no native module to compile) |
-| DeepSeek Harness | ≥ 0.2.2-rc.1, < 0.3.0 |
-| Database drivers | `pg` and `mysql2` ship with the plugin and load only when that engine is used |
+- dsh `>=0.2.2-rc.5 <0.3.0`; the bundle ships a host patch, so restart after installing.
+- Node.js `>=24.9.0` (uses the built-in `node:sqlite`).
 
 ## Install
 
 ```bash
-dsh plugin --profile web add @xirang-ai/dsh-db-qa
+dsh plugin add @xirang-ai/dsh-db-qa
+dsh web
 ```
 
-Restart the Host after installing, otherwise neither the tools nor the sidebar entry appear. The panel needs the Web client (`dsh web`); in a CLI-only profile the tools still work.
+After a restart **Data Q&A** appears in the sidebar, and the panel title shows the installed plugin version.
 
 ## Quick start
 
-```text
-Register /Users/me/app.db as a connection named app with dbqa_add_connection
-dbqa_describe_schema connection=app
-dbqa_run_query connection=app sql="select status, count(*) from orders group by status"
-dbqa_save_answer question="orders per status" answer="..." connection=app
-```
+1. **Data Q&A** → **Datasources** → **Add datasource**, pick a type and fill in the connection details.
+2. Click **Test connection**: on success it shows the server version, latency and "read-only confirmed". A test is not required to save, but it is recommended; if you save the same configuration you just tested, the result is stored with it.
+3. Back in **Questions**, click **Create query**, then pick **Data Query** and a data source in the session header.
+4. Just ask, for example "how many orders per status last month". The model first reads schema and knowledge with `dbqa_describe_schema` / `dbqa_read_knowledge`, then fetches real rows with `dbqa_run_query`.
+5. A session appears in the question list only after your first real question; you can then favorite it or open it again.
 
-## Tools
+To build a knowledge base, click **Rebuild structure analysis** on a data source row and confirm. A **Data Analysis** session starts, the model reads schema, DDL and a few sample rows, and writes `index.md` plus one document set per table. Query sessions read the knowledge base first.
 
-| Tool | Purpose |
-| --- | --- |
-| `dbqa_list_connections` | Registered connections (redacted targets), table counts, last five queries |
-| `dbqa_add_connection` | Register `name` / `kind` (`sqlite`, `postgres`, `mysql`) / `target` / `description` |
-| `dbqa_remove_connection` | Delete a connection and its cached schema; query history survives with a null link |
-| `dbqa_describe_schema` | Read every table and view, refresh the cache; optional `table` filter |
-| `dbqa_run_query` | Run one read-only statement; rows default to `rowLimit`, capped at 1000 per call |
-| `dbqa_save_answer` | Keep a question/answer pair, optionally with the `sql` that produced it |
+## The panel
 
-## Read-only by construction
+**Datasources**: list and counters (data sources / healthy / need attention). Each row offers **Test connection**, **Rebuild structure analysis**, **Knowledge**, **Edit** and **Delete**. The database type cannot be changed after creation.
 
-- Every statement passes a scanner that accepts only `select` / `with` / `explain` / `show` / `describe` / `desc` / `values` / `table`, rejects stacked statements, write keywords, `for update`, and `pg_sleep`-style calls. Keywords inside literals and comments do not trip it.
-- The engine enforces it too: SQLite opens with `readOnly: true`, PostgreSQL pools carry `default_transaction_read_only=on`, MySQL runs `SET SESSION TRANSACTION READ ONLY`.
-- Results are capped and report `truncated`, so a table never floods the context.
-- Timeouts and hard disconnects: every statement has a server-side timeout (PostgreSQL `statement_timeout`, MySQL `max_execution_time` / MariaDB `max_statement_time`), and one whole tool call has a `toolTimeoutMs` budget. When either expires the plugin returns `DBQA_TIMEOUT` first and then drops the connection (destroying the PostgreSQL socket, `destroy()` on MySQL), so a hanging statement cannot pin the tool call or the close. Connection tests are bounded too. SQLite is synchronous and cannot be interrupted; there the read-only open plus `busy_timeout` is what protects you.
-- The load discipline on the agent side lives in both preset prompts: cheap queries only (bounded time range plus a selective filter), no full scans or heavy statements, no retrying the same timed-out statement. A timeout is treated as "this query was too heavy", not as a hint to rewrite the same scan.
-- Credentials are isolated: a password may be a plaintext value or `env:VARIABLE_NAME` (read at connect time). Either way it lives only in `secret_ref_json`, never in `config_json`; the edit form echoes stored passwords, while labels, results and errors still mask them.
+**Questions**: only query sessions that actually asked something, ordered by the host session's last update; the **Favorites** tab shows favorites only. Without any data source the panel asks you to add one instead of starting a query.
 
-## Data
+**Session**: the header band picks the agent and the data source; tools resolve the data source from the current binding on every turn.
 
-```text
-$DSH_HOME/xirang-ai/dsh-db-qa/db-qa.sqlite
-```
+**Knowledge base**: `index.md` and table documents per data source, switchable between **Rendered** and **Code**.
 
-Holds data sources, conversations, knowledge file indexes, and query audit. `dataDir` relocates the whole directory. The schema version lives in `PRAGMA user_version`; upgrades only append migrations.
+## Model tools
+
+Every tool resolves the data source from the **current session binding** and takes no `datasourceId`; each call opens a short-lived read-only connection and closes it afterwards.
+
+| Tool | Preset | What it does and its parameters |
+| --- | --- | --- |
+| `dbqa_describe_schema` | both | Paged table structure: `tables?`, `schema?`, `offset?`, `limit?` (1–200, default 25). Returns DDL, columns, indexes, foreign keys and comments; `nextOffset` is `null` when done. |
+| `dbqa_sample_rows` | analysis only | Sampling: `table`, `limit?` (1–10, default `sampleRows`). |
+| `dbqa_inspect_sql` | analysis only | Structure queries: `sql`, `limit?` (1–200, default 50). Meant for `SHOW CREATE TABLE`, `PRAGMA`, `pg_catalog`; it does **not** go through the read-only gate, so the account decides what runs. |
+| `dbqa_read_knowledge` | both | Read the knowledge base: `table?`, `part?` (`business` / `schema` / `both`). |
+| `dbqa_write_knowledge` | both | Write the knowledge base: `files[]` of `{ table?, part, content }`, at most 20 files; each file is replaced whole and there is no rollback. Write table documents first and `index.md` last; the index must link to every document. |
+| `dbqa_run_query` | query only | Fetch data: `sql`, `limit?` (1..`rowLimit`). Runs through the read-only gate, then returns `columns` / `rows` / `rowCount` / `truncated` / `durationMs`. |
+
+## Read-only and safety
+
+SQL from **Data Query** goes through the read-only gate before it reaches the database:
+
+- Exactly one statement; the first keyword must be `SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `DESCRIBE`, `DESC`, `PRAGMA` or `TABLE`.
+- Any write keyword (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `GRANT`, `VACUUM`, and friends) is rejected; the same words inside comments or string literals are ignored first.
+- `PRAGMA` is limited to a read-only whitelist: `table_info`, `table_xinfo`, `index_list`, `index_info`, `foreign_key_list`, `database_list`, `compile_options`.
+- `FOR UPDATE`, `LOCK IN SHARE MODE`, `INTO OUTFILE`, `SELECT … INTO`, and PostgreSQL's `set_config` / `pg_terminate_backend` / `pg_cancel_backend` are rejected.
+
+`dbqa_inspect_sql`, used by **Data Analysis**, deliberately skips the gate because it must run `PRAGMA` and `SHOW CREATE TABLE`. Its boundary is the account's permissions and the read-only connection, so do not let the model write data in analysis sessions.
+
+Connections are opened read-only with a second line of defence: SQLite `readOnly` + `query_only`, PostgreSQL `default_transaction_read_only=on`, MySQL `SET SESSION TRANSACTION READ ONLY`.
+
+Result sets are capped and report `truncated`; `dbqa_run_query` returns at most `rowLimit` (200) rows by default. A statement is bounded by `queryTimeoutMs` and the whole call by the `toolTimeoutMs` hard budget; on timeout the call is cancelled and the connection dropped. SQLite's API is synchronous and has no interruptible statement handle, so a long query can only finish on its own; `busy_timeout` only bounds lock waits.
+
+Credential policy (a deliberate trade-off): a password may be stored in plaintext in the plugin's `secret_ref_json`, or as `env:VAR` read from the process environment; `config_json` never contains sensitive fields. Connection strings, accounts and passwords are redacted from logs, tool output and errors; the edit form echoes stored passwords by design.
+
+Every tool call, successful or not, writes a query-audit row, kept for `auditRetentionDays` days.
 
 ## Configuration
 
-```yaml
-- id: dbqa
-  config:
-    dataDir: ''
-    defaultLocale: ''
-    rowLimit: 200
-    queryTimeoutMs: 30000
-    toolTimeoutMs: 120000
-    connectTimeoutMs: 10000
-    sampleRows: 5
-    auditRetentionDays: 90
-```
-
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `dataDir` | `''` | Metadata directory; empty means `$DSH_HOME/xirang-ai/dsh-db-qa` |
-| `rowLimit` | `200` | Default maximum rows per query (1–2000) |
-| `defaultLocale` | `''` | Panel language; empty follows the host |
-| `queryTimeoutMs` | `30000` | Timeout for one statement (1000–120000 ms); also passed to PostgreSQL `statement_timeout` and MySQL `max_execution_time` |
-| `toolTimeoutMs` | `120000` | Upper bound for one whole tool call (1000–600000 ms): connecting, every statement and reading rows; the connection is dropped on expiry |
-| `connectTimeoutMs` | `10000` | Default connect/test timeout (1000–120000 ms) |
-| `sampleRows` | `5` | Sample rows read per table during analysis (1–50) |
-| `auditRetentionDays` | `90` | Days to keep query audit rows (1–3650) |
+| `dataDir` | `''` | Root for the metadata database and knowledge bases; empty means `$DSH_HOME/xirang-ai/dsh-db-qa`. |
+| `defaultLocale` | `''` | Explicit UI locale (`zh` / `en`); empty follows the host. |
+| `rowLimit` | `200` | Default row cap for `dbqa_run_query` (1–2000). |
+| `queryTimeoutMs` | `30000` | Server-side timeout for one query (1000–120000). |
+| `toolTimeoutMs` | `120000` | Upper bound for a whole tool call, connecting and reading rows included (1000–600000). |
+| `connectTimeoutMs` | `10000` | Connection timeout used when a data source does not set its own (1000–120000). |
+| `sampleRows` | `5` | Rows sampled per table by the analysis agent (1–50). |
+| `auditRetentionDays` | `90` | Days of query-audit rows to keep (1–3650). |
+
+Set these under `config` on the `- id: dbqa` row in the profile's `cordis.yml`; the bundle defaults live in `cordis.patch.yml`.
+
+## Data and files
+
+By default everything lives under `$DSH_HOME/xirang-ai/dsh-db-qa/`:
+
+```text
+db-qa.sqlite                         metadata database (WAL)
+knowledge/<datasource-id>/index.md
+knowledge/<datasource-id>/tables/<schema.table>/business.md
+knowledge/<datasource-id>/tables/<schema.table>/schema.md
+```
+
+The metadata database records its schema version in `PRAGMA user_version`; upgrades run the new migrations and never downgrade. Back up `db-qa.sqlite` before upgrading. If the stored schema is newer than the plugin, it is opened read-only with a warning.
 
 ## Development
 
 ```bash
 pnpm install
-pnpm run verify      # typecheck → lint → build → test
+pnpm run verify          # typecheck + lint + build + test
+
+DSH_HOME=$PWD/.devhome dsh --profile dev --from-default-profile web --dump-config > /dev/null
+DSH_HOME=$PWD/.devhome dsh plugin --profile dev add .
+DSH_HOME=$PWD/.devhome dsh --profile dev --port 3091 --no-open
 ```
 
-Local loop:
+Tests come in three layers: pure logic (the gate, field parsing, row capping), assembly (a metadata database in a temp directory, migrations, CRUD, the remote service), and a real-profile smoke test. See [RELEASE.md](RELEASE.md) for the release checklist.
 
-```bash
-dsh --profile dev --from-default-profile web --dump-config > /dev/null
-dsh plugin --profile dev add .
-dsh --profile dev --port 3091 --no-open
-```
+## Known limits
 
-Rebuild and restart the test Host after each change so the browser picks up the new `lib/client.js`.
+- SQLite, PostgreSQL and MySQL only; there are no write tools and none are planned.
+- The read-only gate is lexical protection; the database account still has the final say. Use a read-only account for production.
+- One knowledge base per data source; table documents are replaced whole, with no history or rollback.
+- The panel is a single-user workbench with no permission model; treat plaintext passwords in the metadata database as local secrets.
 
 ## License
 

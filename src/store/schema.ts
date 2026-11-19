@@ -94,6 +94,16 @@ export const MIGRATIONS: readonly Migration[] = Object.freeze([
       for (const statement of SCHEMA_STATEMENTS) db.exec(statement)
     },
   }),
+  Object.freeze({
+    version: 2,
+    description: '会话行区分「选了数据源」与「用户已开始提问」：新增 started_at，旧行按创建时间回填',
+    up(db: DatabaseSync): void {
+      db.exec('ALTER TABLE dbqa_conversation ADD COLUMN started_at INTEGER')
+      // 旧行都产生于「选数据源即入列表」的语义，回填后保持原来的可见性。
+      db.exec('UPDATE dbqa_conversation SET started_at = created_at WHERE started_at IS NULL')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_conversation_started ON dbqa_conversation (started_at DESC)')
+    },
+  }),
 ])
 
 /** 当前构建期望的结构版本。 */
@@ -127,6 +137,7 @@ export const SCHEMA_COMMENTS: readonly SchemaComment[] = Object.freeze([
   { table: 'dbqa_conversation', column: 'favorited_at', description: '收藏时间（epoch ms）；取消收藏置 NULL' },
   { table: 'dbqa_conversation', column: 'last_active_at', description: '索引行建立时间（epoch ms）；列表排序以宿主会话时间为准，这里只保证分页稳定' },
   { table: 'dbqa_conversation', column: 'created_at', description: '创建时间（epoch ms）' },
+  { table: 'dbqa_conversation', column: 'started_at', description: '首条用户提问时间（epoch ms）；NULL 表示只选了数据源、还没开始对话，不进问题列表' },
 
   { table: 'dbqa_knowledge_file', column: '', description: '知识库索引：只记录 hash / size，不存正文，也不充当文件清单' },
   { table: 'dbqa_knowledge_file', column: 'datasource_id', description: '所属数据源' },

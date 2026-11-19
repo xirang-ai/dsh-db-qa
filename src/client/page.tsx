@@ -551,7 +551,7 @@ function HomeView(props: {
           <h2 className="dbqa-section-title">{t('dbqa.home.listTitle')}</h2>
           <p className="dbqa-subtitle">{t('dbqa.home.listHint')}</p>
         </div>
-        {startQuery === undefined ? null : (
+        {startQuery === undefined || !hasDatasource ? null : (
           <button type="button" className="dbqa-button dbqa-button--primary" onClick={() => void createQuery()}>
             <PlusIcon />
             {t('dbqa.home.createQuery')}
@@ -636,19 +636,27 @@ function HomeView(props: {
             <ChatIcon size={22} />
           </span>
           <h3>{t(emptyAll ? 'dbqa.home.emptyAllTitle' : 'dbqa.home.emptyFavoriteTitle')}</h3>
-          <p>{t(emptyAll ? 'dbqa.home.emptyAllBody' : 'dbqa.home.emptyFavoriteBody')}</p>
-          {emptyAll && !hasDatasource ? <p className="dbqa-empty-note">{t('dbqa.home.noDatasource')}</p> : null}
+          <p>
+            {t(
+              emptyAll
+                ? hasDatasource
+                  ? 'dbqa.home.emptyAllBody'
+                  : 'dbqa.home.emptyAllBodyNoDataSource'
+                : 'dbqa.home.emptyFavoriteBody',
+            )}
+          </p>
           {emptyAll ? (
             <div className="dbqa-actions dbqa-home-empty-actions">
-              {hasDatasource ? null : (
-                <button type="button" className="dbqa-button" onClick={onAddDatasource}>
+              {hasDatasource ? (
+                startQuery === undefined ? null : (
+                  <button type="button" className="dbqa-button dbqa-button--primary" onClick={() => void createQuery()}>
+                    <PlusIcon />
+                    {t('dbqa.home.createQuery')}
+                  </button>
+                )
+              ) : (
+                <button type="button" className="dbqa-button dbqa-button--primary" onClick={onAddDatasource}>
                   {t('dbqa.datasource.add')}
-                </button>
-              )}
-              {startQuery === undefined ? null : (
-                <button type="button" className="dbqa-button dbqa-button--primary" onClick={() => void createQuery()}>
-                  <PlusIcon />
-                  {t('dbqa.home.createQuery')}
                 </button>
               )}
             </div>
@@ -904,7 +912,10 @@ export function DbqaPage(props: DbqaPageProps): JSX.Element {
             <DatabaseIcon size={18} />
           </span>
           <div className="dbqa-heading-text">
-            <h1 className="dbqa-title">{t('dbqa.panel.title')}</h1>
+            <div className="dbqa-title-line">
+              <h1 className="dbqa-title">{t('dbqa.panel.title')}</h1>
+              <span className="dbqa-version">{`v${__DBQA_VERSION__}`}</span>
+            </div>
             <p className="dbqa-subtitle">{t('dbqa.panel.subtitle')}</p>
           </div>
         </div>

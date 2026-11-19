@@ -13,6 +13,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Config } from './config.ts'
 import type { Config as DbqaConfig } from './config.ts'
 import { openDbqaDatabase } from './store/db.ts'
+import { watchFirstQuestions } from './session-recorder.ts'
 import { DbqaWorkbenchService } from './remote/service.ts'
 import { TYPERT_MANIFEST } from './remote/contract.ts'
 
@@ -50,6 +51,9 @@ export function apply(ctx: Context, config: DbqaConfig): void {
     ctx.provide('dbqaAnalysis', { database, config })
     ctx.provide('dbqaQuery', { database, config })
 
+    // 首条真人提问时把查询会话补进问题列表（分析会话只留绑定，不落列表行）。
+    const stopWatching = watchFirstQuestions(ctx, database, logger)
+
     ctx.inject(['typert'], (registryCtx) => {
       const typert = registryCtx.get('typert') as unknown as TypertRegistrar | undefined
       if (typert === undefined) return
@@ -58,11 +62,8 @@ export function apply(ctx: Context, config: DbqaConfig): void {
     })
 
     return () => {
+      stopWatching()
       database.close()
     }
   }, 'dbqa: metadata database')
 }
-
-export { openDbqaDatabase } from './store/db.ts'
-export type { DbqaDatabase, OpenDatabaseOptions, StartupReport, StartupOutcome } from './store/db.ts'
-export { DbqaError, describeError } from './errors.ts'

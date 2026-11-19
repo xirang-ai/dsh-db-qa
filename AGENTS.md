@@ -14,7 +14,7 @@
 
 ## 2. 版本基线
 
-- dsh `0.2.2-rc.1`，Node `>= 24.9.0`，Cordis 4.1.x，Schemastery 3.19.x。
+- dsh `0.2.2-rc.5`，Node `>= 24.9.0`，Cordis 4.1.x，Schemastery 3.19.x。
 - `engines.dsh` 决定兼容范围；改它之前先确认目标版本真的存在。
 - 版本号只由发版指令变更（见 RELEASE.md）。
 
