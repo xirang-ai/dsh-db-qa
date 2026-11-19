@@ -1,0 +1,27 @@
+# @xirang-ai/dsh-db-qa bundle layer.
+#
+# `insert:` is required: a top-level `- id:` row replaces an existing row, and
+# the Loader silently skips a replacement whose target does not exist.
+#
+# The row `name` must stay the package root (bare package name): the Web module
+# composer resolves `<entry name>/package.json` to read `dsh.client`; a subpath
+# row cannot resolve that manifest, so the browser half would never be
+# discovered and the sidebar entry would never appear.
+#
+# The config block is the bundle's default; a profile patch can override it:
+#
+#   - id: dbqa
+#     config:
+#       dataDir: '/absolute/path'
+- insert:
+    - id: dbqa
+      name: '@xirang-ai/dsh-db-qa'
+      config:
+        dataDir: ''
+        defaultLocale: ''
+        rowLimit: 200
+        queryTimeoutMs: 30000
+        toolTimeoutMs: 120000
+        connectTimeoutMs: 10000
+        sampleRows: 5
+        auditRetentionDays: 90

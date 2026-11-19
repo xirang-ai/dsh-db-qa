@@ -147,3 +147,12 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# dsh-db-qa build output and local profile state
+lib/
+.devhome/
+.tmp/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.tgz
