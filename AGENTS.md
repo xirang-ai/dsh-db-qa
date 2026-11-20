@@ -29,7 +29,7 @@ src/
   i18n.ts             宿主侧文案（与 locale/*.json 共用）
   store/              元数据库：schema、迁移、版本对账、事务、CRUD
   db/                 用户数据库：只读连接、三个适配器、执行编排
-  tools/              六个模型工具
+  tools/              七个模型工具
   remote/             Typert 描述表与面板读模型
   client/             Web 面板（纯 props）
 cordis.patch.yml      bundle 层：插件行 + 默认 config
@@ -85,6 +85,12 @@ test/                 node:test，直接跑 TypeScript
 - R26 不要在 `lib/` 里手改代码，也不要提交 `lib/`。
 - R27 测试分三层：纯逻辑（目标解析、行数截断）、装配（临时目录打开元数据库、CRUD、版本对账）、真实 profile 冒烟。
 - R28 改完代码必须 `pnpm run verify`，然后重建并重启测试 Host 验证。
+
+### 知识库文档
+
+- R29 知识库里的相对链接必须写完整表目录名 `tables/<schema>.<table>/{business,schema}.md`。表目录带库/schema 前缀，裸表名（`tables/<table>/…`）在面板里有后缀兜底、在编辑器里 404，`dbqa_check_knowledge_links` 会判成 `abbreviated`。
+- R30 链接的解析、校验与修复只在 `src/knowledge/links.ts` 实现一次：写侧工具与 `src/client/link.ts` 都从这里取，不要在服务层或客户端另写一套。
+- R31 写完知识库文档必须跑 `dbqa_check_knowledge_links`；有 `abbreviated` 就带 `fix: true` 再查，直到 `problems` 为空。`dangling`（目标不存在）、`missing-index`、`outside` 不自动改，要报告给人或补文档后再查。
 
 ## 5. 官方文档入口
 

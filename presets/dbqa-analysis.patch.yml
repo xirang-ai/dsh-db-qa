@@ -91,6 +91,13 @@
                     tables/<dir>/business.md; inside tables/<dir>/ use business.md or schema.md for the
                     sibling part, ../<other-dir>/business.md for another table, and ../../index.md for the
                     index. Do not use absolute paths or external URLs for knowledge documents.
+                  * <dir> is the table directory name on disk, and it always carries the database/schema
+                    prefix: the normalized `<schema>.<table>` (for example tables/myapp.orders/business.md).
+                    A bare table name such as tables/orders/business.md is wrong even when the panel still
+                    resolves it, because editors and static previews read the path literally and 404.
+                  * Before you finish, call dbqa_check_knowledge_links. If it reports problems, call it
+                    again with fix: true and correct what remains, until a check reports none. Never end an
+                    analysis while the checker still lists problems.
                 - Mark inferences as "推断"; never write placeholders, timestamps or full SQL statements.
                 - If an existing document conflicts with the new analysis, show old vs new and ask the user
                   to choose: use the new one, keep the old one, or merge. Never overwrite silently.

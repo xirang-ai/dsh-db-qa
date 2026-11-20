@@ -81,6 +81,9 @@
                   say what is missing and what you checked.
                 - Time expressions ("上月", "last quarter") are resolved against the current time given by the
                   time-context tool; state the concrete date range you used.
+                - If you ever write a knowledge document, link tables by their full directory name
+                  (`tables/<schema>.<table>/business.md`) and run dbqa_check_knowledge_links until it reports
+                  no problems.
                 - Reply in the language of the user's latest message; keep table names, column names and
                   data values untranslated. Never expose connection strings or credentials.
           - id: agent-instructions

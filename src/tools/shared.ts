@@ -376,7 +376,10 @@ export function registerWriteKnowledge(ctx: Context, value: DbqaToolService): vo
         + 'rename); writes are independent and not rolled back across files. Send at most 20 files per call. '
         + 'Write table documents first, then index.md last. index.md must link to every other document you '
         + 'generate, and whenever a document describes a relationship to another table or document it must '
-        + 'link to that document with a relative Markdown link. Only include content the user has confirmed.',
+        + 'link to that document with a relative Markdown link. Table directories are named `<schema>.<table>`, '
+        + 'so link with the full directory name (`tables/<schema>.<table>/business.md`), never a bare table '
+        + 'name. Run dbqa_check_knowledge_links after writing and fix what it reports. Only include content the '
+        + 'user has confirmed.',
       parameters: {
         files: {
           type: 'array',
@@ -445,13 +448,88 @@ export function registerWriteKnowledge(ctx: Context, value: DbqaToolService): vo
   )
 }
 
-/** 注册分析 / 查询都要用的三件结构工具。 */
+/** 注册 `dbqa_check_knowledge_links`。 */
+export function registerCheckKnowledgeLinks(ctx: Context, value: DbqaToolService): void {
+  ctx.tools.register(
+    defineTool({
+      name: 'dbqa_check_knowledge_links',
+      description:
+        'Check every relative Markdown link in the knowledge base of the bound datasource. Table directories are '
+        + 'named `<schema>.<table>`, so a link such as `../orders/business.md` resolves inside the panel but breaks '
+        + 'in editors and static previews. With `fix` the tool rewrites each abbreviation that matches exactly one '
+        + 'table directory and reports what is left; it never guesses when a directory is ambiguous or the target '
+        + 'is missing. Run it after writing documents, and run it again after fixing.',
+      parameters: {
+        fix: {
+          type: 'boolean',
+          description: 'Rewrite fixable abbreviated links in place. Defaults to false (report only).',
+        },
+      },
+      output: {
+        schema: { type: 'json' },
+        render: (_args, output) => [{ type: 'text', text: JSON.stringify(output) }],
+      },
+      async execute(args, exec) {
+        const datasourceId = bindingOf(value, exec)
+        const startedAt = Date.now()
+        try {
+          const report = await value.database.knowledge.checkLinks(datasourceId, { fix: args.fix === true })
+          const LIMIT = 100
+          const problems = report.problems.slice(0, LIMIT).map((problem) => ({
+            path: problem.path,
+            line: problem.line,
+            link: problem.href,
+            kind: problem.kind,
+            resolved: problem.resolved,
+            suggestion: problem.suggestion,
+          }))
+          const truncated = problems.length < report.problems.length
+          recordToolAudit(value, exec, {
+            datasourceId,
+            toolName: 'dbqa_check_knowledge_links',
+            startedAt,
+            outcome: 'ok',
+            rowCount: report.problems.length,
+            truncated,
+          })
+          const hint =
+            report.problems.length === 0
+              ? 'All relative links point at documents that exist.'
+              : args.fix === true
+                ? 'Remaining links could not be fixed automatically: write the missing target document or correct the link by hand.'
+                : 'Call again with fix=true to rewrite abbreviated table links; dangling links need the missing document or a manual edit.'
+          return {
+            documents: report.documents,
+            links: report.links,
+            problems,
+            fixed: report.fixed.map((item) => ({ path: item.path, links: item.links })),
+            remaining: report.problems.length,
+            truncated,
+            hint,
+          }
+        } catch (error) {
+          recordToolAudit(value, exec, {
+            datasourceId,
+            toolName: 'dbqa_check_knowledge_links',
+            startedAt,
+            outcome: 'failed',
+            errorCode: asDbqaError(error)?.code ?? 'DBQA_INTERNAL',
+          })
+          throw error
+        }
+      },
+    }),
+  )
+}
+
+/** 注册分析 / 查询都要用的四件结构工具。 */
 export function registerSharedTools(
   ctx: Context,
   value: DbqaToolService,
-  which: readonly ('describe' | 'read' | 'write')[],
+  which: readonly ('describe' | 'read' | 'write' | 'check')[],
 ): void {
   if (which.includes('describe')) registerDescribeSchema(ctx, value)
   if (which.includes('read')) registerReadKnowledge(ctx, value)
   if (which.includes('write')) registerWriteKnowledge(ctx, value)
+  if (which.includes('check')) registerCheckKnowledgeLinks(ctx, value)
 }
