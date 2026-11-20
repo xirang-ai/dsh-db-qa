@@ -97,7 +97,10 @@ export function parseMarkdownLinks(markdown: string): readonly ParsedLink[] {
     if ((match[1] ?? '') === '!') continue
     const href = match[2] ?? ''
     if (href === '') continue
-    const hrefOffset = start + text.indexOf(href, 2)
+    // 链接文字里可能重复出现同一个路径（如 `[go to ../a/b.md](../a/b.md)`），
+    // 所以从 `](` 之后起找 href，避免把偏移落到文字上。
+    const marker = text.indexOf('](')
+    const hrefOffset = start + text.indexOf(href, marker + 2)
     line += countNewlines(masked, cursor, hrefOffset)
     cursor = hrefOffset
     links.push({ href, start: hrefOffset, end: hrefOffset + href.length, line })

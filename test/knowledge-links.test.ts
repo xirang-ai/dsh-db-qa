@@ -112,6 +112,27 @@ test('reports dangling targets, a missing index and links above the root', () =>
   )
 })
 
+test('rewrites the href even when the link text repeats it', () => {
+  const document = {
+    path: 'tables/baimiao_aibims_com.cloud_users/business.md',
+    content: 'See [go to ../cloud_orders/business.md](../cloud_orders/business.md).\n',
+  }
+  const report = checkLinks([document], TABLES, true)
+  assert.deepEqual(
+    report.problems.map((problem) => [problem.kind, problem.suggestion]),
+    [['abbreviated', '../baimiao_aibims_com.cloud_orders/business.md']],
+  )
+  const fixes = fixesOf(document, report.problems)
+  assert.equal(fixes.length, 1)
+  // 偏移必须落在 `](` 之后的 href 上，而不是链接文字里那一份。
+  assert.ok((fixes[0]?.start ?? 0) > document.content.indexOf(']('))
+  assert.equal(document.content.slice(fixes[0]?.start, fixes[0]?.end), '../cloud_orders/business.md')
+  assert.equal(
+    applyFixes(document.content, fixes),
+    'See [go to ../cloud_orders/business.md](../baimiao_aibims_com.cloud_orders/business.md).\n',
+  )
+})
+
 test('rewrites only the links that have a suggestion', () => {
   const document = {
     path: 'tables/baimiao_aibims_com.cloud_users/business.md',
