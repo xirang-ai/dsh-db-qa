@@ -1,6 +1,6 @@
 {
   "name": "@xirang-ai/dsh-db-qa",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "DeepSeek Harness plugin: ask questions about your databases in natural language.",
   "license": "MIT",
   "repository": {

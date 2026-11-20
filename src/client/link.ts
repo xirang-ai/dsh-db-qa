@@ -1,12 +1,16 @@
 /**
- * 知识库文档内的相对链接解析。
+ * 知识库文档内的相对链接解析（客户端入口）。
  *
  * 面板只认识两种文档：根目录的 `index.md` 与 `tables/<dir>/{business,schema}.md`。
  * 这里把 Markdown 里的 href 按当前文档路径解析成其中一种；外部地址与
  * 知识库之外的路径都返回 `other`，由调用方决定怎么提示。
  *
+ * 解析与「短名对全名」的规则统一放在 `knowledge/links.ts`，写侧校验工具与
+ * 面板渲染共用同一份实现，避免两边对链接是否有效的判断走样。
+ *
  * @module
  */
+import { matchTableDir, resolveRelative, type TableDirEntry } from '../knowledge/links.ts'
 
 /** 表文档的两种部分。 */
 export type KnowledgeLinkPart = 'business' | 'schema'
@@ -19,37 +23,10 @@ export type KnowledgeLinkTarget =
   | { readonly kind: 'other'; readonly path: string }
 
 /** 一张表在知识库里的目录名与表引用。 */
-export interface TableLinkCandidate {
-  readonly dir: string
-  readonly tableRef: string
-}
+export type TableLinkCandidate = TableDirEntry
 
 const SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
 const TABLE_DOC = /^tables\/([^/]+)\/(business|schema)\.md$/
-
-function decodePath(value: string): string | null {
-  try {
-    return decodeURIComponent(value)
-  } catch {
-    return null
-  }
-}
-
-/** 把相对路径按当前文档所在目录拼起来；越出知识库根目录时返回 null。 */
-function resolveSegments(fromRelPath: string, relative: string): string[] | null {
-  const parts = fromRelPath.split('/')
-  parts.pop()
-  for (const segment of relative.split('/')) {
-    if (segment === '' || segment === '.') continue
-    if (segment === '..') {
-      if (parts.length === 0) return null
-      parts.pop()
-      continue
-    }
-    parts.push(segment)
-  }
-  return parts
-}
 
 /**
  * 把链接里的目录名对到真实表引用。
@@ -62,16 +39,7 @@ export function resolveTableRef(
   dir: string,
   tables: readonly TableLinkCandidate[],
 ): string | undefined {
-  const exact = tables.find((table) => table.dir === dir)
-  if (exact !== undefined) return exact.tableRef
-
-  const matches = tables.filter(
-    (table) =>
-      table.tableRef === dir
-      || table.tableRef.endsWith(`.${dir}`)
-      || table.dir.endsWith(`.${dir}`),
-  )
-  return matches.length === 1 ? matches[0]?.tableRef : undefined
+  return matchTableDir(dir, tables)?.tableRef
 }
 
 /** 解析一条 Markdown 链接；`fromRelPath` 是链接所在文档的相对路径。 */
@@ -84,12 +52,8 @@ export function resolveKnowledgeLink(fromRelPath: string, href: string): Knowled
   const pathPart = cut === -1 ? raw : raw.slice(0, cut)
   if (pathPart === '') return { kind: 'other', path: raw }
 
-  const decoded = decodePath(pathPart)
-  if (decoded === null || decoded.startsWith('/')) return { kind: 'other', path: pathPart }
-
-  const segments = resolveSegments(fromRelPath, decoded)
-  if (segments === null || segments.length === 0) return { kind: 'other', path: pathPart }
-  const path = segments.join('/')
+  const path = resolveRelative(fromRelPath, raw)
+  if (path === null) return { kind: 'other', path: pathPart }
   if (path === 'index.md') return { kind: 'index' }
 
   const table = TABLE_DOC.exec(path)

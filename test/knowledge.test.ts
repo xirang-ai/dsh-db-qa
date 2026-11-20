@@ -115,3 +115,44 @@ test('normalized table names keep colliding tables apart', async () => {
     database.close()
   }
 })
+
+test('checkLinks rewrites abbreviated table links and leaves dangling ones alone', async () => {
+  const database = openDbqaDatabase({ dataDir: tempDir() })
+  try {
+    const id = makeDatasource(database, 'links')
+    await database.knowledge.write(id, [
+      {
+        tableRef: 'main.users',
+        part: 'business',
+        content: '# users\n\n[orders](../orders/business.md)\n[mystery](../missing/business.md)\n',
+      },
+      { tableRef: 'main.orders', part: 'business', content: '# orders\n\n[users](../main.users/business.md)\n' },
+      { part: 'index', content: '# index\n\n[users](tables/users/business.md)\n' },
+    ])
+
+    const report = await database.knowledge.checkLinks(id)
+    assert.equal(report.documents, 3)
+    assert.equal(report.links, 4)
+    assert.deepEqual(
+      report.problems.map((problem) => `${problem.path}:${problem.kind}`).sort(),
+      [
+        'index.md:abbreviated',
+        'tables/main.users/business.md:abbreviated',
+        'tables/main.users/business.md:dangling',
+      ].sort(),
+    )
+
+    const fixed = await database.knowledge.checkLinks(id, { fix: true })
+    assert.deepEqual(fixed.fixed.map((item) => item.path).sort(), ['index.md', 'tables/main.users/business.md'])
+    assert.deepEqual(fixed.problems.map((problem) => problem.kind), ['dangling'])
+
+    const root = join(database.dataDir, 'knowledge', id)
+    assert.equal(
+      readFileSync(join(root, 'tables/main.users/business.md'), 'utf8'),
+      '# users\n\n[orders](../main.orders/business.md)\n[mystery](../missing/business.md)\n',
+    )
+    assert.equal(readFileSync(join(root, 'index.md'), 'utf8'), '# index\n\n[users](tables/main.users/business.md)\n')
+  } finally {
+    database.close()
+  }
+})

@@ -84,6 +84,7 @@ test('the query preset exposes only the read-only answer tools', () => {
   const h = harness('dbqaQuery')
   try {
     assert.deepEqual([...h.tools.keys()].sort(), [
+      'dbqa_check_knowledge_links',
       'dbqa_describe_schema',
       'dbqa_read_knowledge',
       'dbqa_run_query',
@@ -100,6 +101,7 @@ test('the analysis preset keeps the two structure tools', () => {
   const h = harness('dbqaAnalysis')
   try {
     assert.deepEqual([...h.tools.keys()].sort(), [
+      'dbqa_check_knowledge_links',
       'dbqa_describe_schema',
       'dbqa_inspect_sql',
       'dbqa_read_knowledge',
@@ -173,6 +175,49 @@ test('describe_schema and sample_rows are audited on success', async () => {
     assert.equal(describe?.rowCount, 1)
     assert.equal(sample?.outcome, 'ok')
     assert.equal(sample?.rowCount, 2)
+  } finally {
+    h.database.close()
+  }
+})
+
+test('dbqa_check_knowledge_links reports, fixes and audits', async () => {
+  const h = harness('dbqaAnalysis')
+  try {
+    await h.database.knowledge.write(h.datasourceId, [
+      { tableRef: 'main.orders', part: 'business', content: '# orders\n\n[again](../orders/business.md)\n' },
+      { part: 'index', content: '# index\n\n[orders](tables/orders/business.md)\n' },
+    ])
+
+    const report = (await run(h, 'dbqa_check_knowledge_links', {})) as {
+      documents: number
+      links: number
+      problems: { path: string; kind: string }[]
+      fixed: unknown[]
+      remaining: number
+      hint: string
+    }
+    assert.equal(report.documents, 2)
+    assert.equal(report.links, 2)
+    assert.equal(report.remaining, 2)
+    assert.deepEqual(report.fixed, [])
+    assert.deepEqual(
+      report.problems.map((problem) => problem.kind),
+      ['abbreviated', 'abbreviated'],
+    )
+
+    const fixed = (await run(h, 'dbqa_check_knowledge_links', { fix: true })) as {
+      fixed: { path: string; links: number }[]
+      remaining: number
+      problems: unknown[]
+    }
+    assert.equal(fixed.remaining, 0)
+    assert.deepEqual(fixed.problems, [])
+    assert.deepEqual(fixed.fixed.map((item) => item.links), [1, 1])
+
+    const audits = h.database.audit.recent(h.datasourceId)
+    const checks = audits.filter((item) => item.toolName === 'dbqa_check_knowledge_links')
+    assert.equal(checks.length, 2)
+    assert.ok(checks.every((item) => item.outcome === 'ok'))
   } finally {
     h.database.close()
   }

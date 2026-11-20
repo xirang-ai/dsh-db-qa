@@ -1,7 +1,7 @@
 /**
  * 数据结构分析 Agent 的工具集（只挂在 `dbqa-analysis` preset 里）。
  *
- * 表结构、知识库读写三件工具与查询 preset 共用；分析额外拥有
+ * 表结构、知识库读写与链接检查四件工具与查询 preset 共用；分析额外拥有
  * `dbqa_inspect_sql` 与 `dbqa_sample_rows`，查询 preset 不注册它们。
  *
  * @module
@@ -27,7 +27,7 @@ export const inject = ['tools', 'dbqaAnalysis'] as const
 export function apply(ctx: Context): void {
   const value: DbqaToolService = toolService(ctx, 'dbqaAnalysis')
 
-  registerSharedTools(ctx, value, ['describe', 'read', 'write'])
+  registerSharedTools(ctx, value, ['describe', 'read', 'write', 'check'])
 
   ctx.tools.register(
     defineTool({

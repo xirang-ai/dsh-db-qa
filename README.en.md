@@ -51,6 +51,7 @@ Every tool resolves the data source from the **current session binding** and tak
 | `dbqa_inspect_sql` | analysis only | Structure queries: `sql`, `limit?` (1–200, default 50). Meant for `SHOW CREATE TABLE`, `PRAGMA`, `pg_catalog`; it does **not** go through the read-only gate, so the account decides what runs. |
 | `dbqa_read_knowledge` | both | Read the knowledge base: `table?`, `part?` (`business` / `schema` / `both`). |
 | `dbqa_write_knowledge` | both | Write the knowledge base: `files[]` of `{ table?, part, content }`, at most 20 files; each file is replaced whole and there is no rollback. Write table documents first and `index.md` last; the index must link to every document. |
+| `dbqa_check_knowledge_links` | both | Check links: `fix?` (default `false`). Validates every relative link against the real directories on disk; with `fix: true` it rewrites table links that omit the database/schema prefix to the full `tables/<schema>.<table>/…` name, then reports which documents changed and what remains. Missing or ambiguous targets are reported, never guessed. |
 | `dbqa_run_query` | query only | Fetch data: `sql`, `limit?` (1..`rowLimit`). Runs through the read-only gate, then returns `columns` / `rows` / `rowCount` / `truncated` / `durationMs`. |
 
 ## Read-only and safety

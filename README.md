@@ -51,6 +51,7 @@ dsh web
 | `dbqa_inspect_sql` | 仅分析 | 结构查询：`sql`、`limit?`（1–200，默认 50）。用于 `SHOW CREATE TABLE`、`PRAGMA`、`pg_catalog`；不过只读闸门，能否执行由账号权限决定。 |
 | `dbqa_read_knowledge` | 两者 | 读知识库：`table?`、`part?`（`business` / `schema` / `both`）。 |
 | `dbqa_write_knowledge` | 两者 | 写知识库：`files[]`，每份 `{ table?, part, content }`，最多 20 份；整篇替换、不回滚。先写表文档，最后写 `index.md`，索引必须链到每份文档。 |
+| `dbqa_check_knowledge_links` | 两者 | 查链接：`fix?`（默认 `false`）。按磁盘真实目录校验相对链接；`fix: true` 把「省略库/schema 前缀」的表链接改成 `tables/<schema>.<table>/…` 全名，返回改了哪些文档、还剩哪些问题。目标不存在或有歧义时只报告、不猜。 |
 | `dbqa_run_query` | 仅查询 | 查数：`sql`、`limit?`（1..`rowLimit`）。先过只读闸门再限行执行，返回 `columns` / `rows` / `rowCount` / `truncated` / `durationMs`。 |
 
 ## 只读与安全

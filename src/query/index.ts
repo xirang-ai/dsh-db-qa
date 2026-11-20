@@ -22,7 +22,7 @@ export const inject = ['tools', 'dbqaQuery'] as const
 export function apply(ctx: Context): void {
   const value: DbqaToolService = toolService(ctx, 'dbqaQuery')
 
-  registerSharedTools(ctx, value, ['describe', 'read', 'write'])
+  registerSharedTools(ctx, value, ['describe', 'read', 'write', 'check'])
 
   ctx.tools.register(
     defineTool({

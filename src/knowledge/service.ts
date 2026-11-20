@@ -19,6 +19,13 @@ import {
   tableRelPath,
   type TablePart,
 } from './layout.ts'
+import {
+  applyFixes,
+  checkLinks as scanLinks,
+  fixesOf,
+  type LinkCheckDocument,
+  type LinkProblem,
+} from './links.ts'
 import type { KnowledgeFileRow, KnowledgeIndexStore, KnowledgeKind } from './store.ts'
 
 /** 单个文件的状态。 */
@@ -79,6 +86,26 @@ export interface KnowledgeReadResult {
   readonly documents: readonly KnowledgeDocument[]
   /** 请求了但磁盘上不存在的部分。 */
   readonly missingParts: readonly string[]
+}
+
+/** 一次修复改写了哪份文档的几条链接。 */
+export interface KnowledgeLinkFix {
+  readonly path: string
+  readonly links: number
+}
+
+/** 知识库相对链接的检查报告。 */
+export interface KnowledgeLinkReport {
+  readonly documents: number
+  readonly links: number
+  readonly problems: readonly LinkProblem[]
+  readonly fixed: readonly KnowledgeLinkFix[]
+}
+
+/** 链接检查选项。 */
+export interface KnowledgeLinkCheckOptions {
+  /** 为 true 时把可修复的缩写链接改写成带库名前缀的全名。 */
+  readonly fix?: boolean
 }
 
 function sha256(content: string | Uint8Array): string {
@@ -197,6 +224,63 @@ export class KnowledgeService {
       .filter((relPath) => !present.has(relPath))
 
     return { index, tables, indexedOnly }
+  }
+
+  /**
+   * 检查（可选修复）知识库内的相对链接。
+   *
+   * 表目录名带库/schema 前缀，模型写文档时又常省掉前缀；面板渲染器有后缀兜底，
+   * 但面板外的 Markdown 阅读器会按字面解析而 404。`fix` 只改写「能唯一对上真实
+   * 目录」的缩写链接；目标文档根本不存在、`index.md` 缺失这类问题原样报告，不猜。
+   */
+  async checkLinks(
+    datasourceId: string,
+    options: KnowledgeLinkCheckOptions = {},
+  ): Promise<KnowledgeLinkReport> {
+    const status = await this.status(datasourceId)
+    const tables = status.tables.map((table) => ({ dir: table.dir, tableRef: table.tableRef }))
+    const documents: LinkCheckDocument[] = []
+
+    const index = await this.#readDocument(datasourceId, INDEX_REL_PATH, 'index')
+    if (index !== null) documents.push({ path: index.relPath, content: index.content })
+    for (const table of status.tables) {
+      for (const part of ['business', 'schema'] as const) {
+        if (!table[part].exists) continue
+        const document = await this.#readDocument(datasourceId, tableRelPath(table.dir, part), part)
+        if (document !== null) documents.push({ path: document.relPath, content: document.content })
+      }
+    }
+
+    const report = scanLinks(documents, tables, status.index.exists)
+    if (options.fix !== true) {
+      return { documents: documents.length, links: report.links, problems: report.problems, fixed: [] }
+    }
+
+    const dirToTable = new Map(tables.map((table) => [table.dir, table.tableRef]))
+    const rewrites: KnowledgeWriteRequest[] = []
+    const fixed: KnowledgeLinkFix[] = []
+    for (const document of documents) {
+      const own = report.problems.filter((problem) => problem.path === document.path)
+      const fixes = fixesOf(document, own)
+      if (fixes.length === 0) continue
+      const content = applyFixes(document.content, fixes)
+      if (content === document.content) continue
+      if (document.path === INDEX_REL_PATH) {
+        rewrites.push({ part: 'index', content })
+      } else {
+        const dir = dirOfRelPath(document.path) ?? ''
+        const part: TablePart = document.path.endsWith('/schema.md') ? 'schema' : 'business'
+        rewrites.push({ tableRef: dirToTable.get(dir) ?? dir, part, content })
+      }
+      fixed.push({ path: document.path, links: fixes.length })
+    }
+
+    if (rewrites.length === 0) {
+      return { documents: documents.length, links: report.links, problems: report.problems, fixed: [] }
+    }
+    await this.write(datasourceId, rewrites)
+    const after = await this.checkLinks(datasourceId)
+    return { documents: after.documents, links: after.links, problems: after.problems, fixed }
   }
 
   /** 读取并顺带自愈索引：hash 不符只更新索引行，不影响返回内容。 */
